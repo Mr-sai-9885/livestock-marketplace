@@ -451,7 +451,8 @@ PRICING EXPECTATIONS (Indian Context):
                 }
             ],
             response_format: { type: "json_object" },
-            temperature: 0.2
+            temperature: 0.2,
+            max_tokens: 1000,
         };
 
         console.log(`🤖 Requesting OpenRouter Model: ${OPENROUTER_MODEL}...`);
@@ -690,6 +691,10 @@ app.get('/api/listings/my-listings', authMiddleware, async (req, res) => {
             error: error.message 
         });
     }
+});
+
+app.get('/', (req, res) => {
+    res.send('Welcome to the Livestock Market Backend API Server! Use /health to check status.');
 });
 
 // Health Check
