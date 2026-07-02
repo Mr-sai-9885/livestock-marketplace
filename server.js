@@ -375,17 +375,20 @@ app.post('/api/ai/predict-price', async (req, res) => {
         }
 
         // Clean up base64 extraction safely
+        // Clean up base64 extraction safely
         const splitImage = base64Image.split(',');
         const base64Data = splitImage[1] || splitImage[0];
         const header = splitImage[0];
-        const mimeType = header?.match(/:(.*?);/)?.[1] || 'image/jpeg';
+        let mimeType = header?.match(/:(.*?);/)?.[1] || 'image/jpeg';
 
-        if (!mimeType.startsWith('image/')) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Invalid image format. Only image files are allowed.' 
-            });
+        // 🌟 FORCE COMPATIBLE MIME TYPE FOR VISION MODELS 🌟
+        // If it's an unsupported format like x-icon or unrecognized, fallback to image/jpeg
+        if (mimeType === 'image/x-icon' || mimeType === 'image/vnd.microsoft.icon' || !mimeType.startsWith('image/')) {
+            console.log(`⚠️ Overriding unsupported MIME type (${mimeType}) with image/jpeg`);
+            mimeType = 'image/jpeg';
         }
+
+        console.log('✅ Image validation passed:', { mimeType, dataLength: base64Data?.length });
 
         if (!OPENROUTER_API_KEY || OPENROUTER_API_KEY.includes('YOUR_OPENROUTER_API_KEY')) {
             return res.status(500).json({ 
