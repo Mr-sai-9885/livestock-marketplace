@@ -7,6 +7,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fetch = require('node-fetch');
 
 dotenv.config();
 
@@ -373,7 +374,7 @@ app.post('/api/ai/predict-price', async (req, res) => {
             });
         }
 
-        // Clean base64 checking
+        // Clean up base64 extraction safely
         const splitImage = base64Image.split(',');
         const base64Data = splitImage[1] || splitImage[0];
         const header = splitImage[0];
@@ -393,16 +394,8 @@ app.post('/api/ai/predict-price', async (req, res) => {
             });
         }
 
-        // Setup vision payload formatted according to standard OpenAI / OpenRouter formatting
-        const requestBody = {
-            model: OPENROUTER_MODEL,
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "text",
-                            text: `You are an expert livestock appraiser for the Indian market. Analyze this image carefully.
+        // Prompt definition explicitly instructing direct JSON schema adherence
+        const promptText = `You are an expert livestock appraiser for the Indian market. Analyze this image carefully.
 
 CRITICAL VALIDATION:
 1. Verify this is a REAL livestock animal photo (cattle, buffalo, goat, sheep, pig, poultry, horse, etc.)
@@ -411,33 +404,42 @@ CRITICAL VALIDATION:
 
 Animal Weight: ${weight} kg
 
-RESPONSE FORMAT (STRICT JSON ONLY, no code blocks, markdown wrapper or prose outside the object structure):
+You MUST respond strictly in the following JSON format. Do not wrap the JSON in markdown blocks (like \`\`\`json), do not include any explanatory introductory or closing text. Return ONLY raw JSON text.
 
-Valid livestock:
+If valid livestock:
 {
   "is_valid": true,
-  "predicted_price": <number in Indian Rupees>,
-  "animal_breed": "<specific breed name>",
-  "justification": "<2-3 sentences about breed, health, market value>",
-  "confidence": <70-98>,
-  "market_demand": "<High/Medium/Low>"
+  "predicted_price": 45000,
+  "animal_breed": "Breed name here",
+  "justification": "2-3 sentences about breed, health, and value matching current trends.",
+  "confidence": 90,
+  "market_demand": "High"
 }
 
-Invalid image:
+If invalid image:
 {
   "is_valid": false,
-  "reason": "<explain why - cartoon/toy/human/wild animal/etc.>"
+  "reason": "Clear explanation showing why it was rejected (e.g., cartoon, human, pet, etc.)"
 }
 
-PRICING (Indian Market context):
+PRICING EXPECTATIONS (Indian Context):
 - Cattle: ₹30,000-₹150,000
 - Buffalo: ₹40,000-₹200,000
 - Goat: ₹8,000-₹40,000
 - Sheep: ₹6,000-₹30,000
 - Pig: ₹10,000-₹50,000
-- Poultry: ₹200-₹2,000
+- Poultry: ₹200-₹2,000`;
 
-Be STRICT on validation.`
+        // Standardised OpenRouter multimodal schema mapping structure
+        const requestBody = {
+            model: OPENROUTER_MODEL,
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: promptText
                         },
                         {
                             type: "image_url",
@@ -448,8 +450,8 @@ Be STRICT on validation.`
                     ]
                 }
             ],
-            response_format: { type: "json_object" }, // Request native JSON structured output
-            temperature: 0.3
+            response_format: { type: "json_object" },
+            temperature: 0.2
         };
 
         console.log(`🤖 Requesting OpenRouter Model: ${OPENROUTER_MODEL}...`);
@@ -458,40 +460,41 @@ Be STRICT on validation.`
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-                'HTTP-Referer': 'http://localhost:5000', // Change to your project URL if deployed
+                'Authorization': `Bearer ${OPENROUTER_API_KEY.trim()}`,
+                'HTTP-Referer': 'https://livestock-marketplace-8jeh.onrender.com',
                 'X-Title': 'Livestock Market App'
             },
             body: JSON.stringify(requestBody)
         });
 
-        console.log('盒子 OpenRouter Response Status:', response.status);
-
         if (!response.ok) {
             const errorData = await response.json();
-            console.error('❌ OpenRouter API error:', errorData);
-            throw new Error(errorData.error?.message || `OpenRouter failed with status ${response.status}`);
+            console.error('❌ OpenRouter API internal rejection error:', errorData);
+            throw new Error(errorData.error?.message || `OpenRouter upstream failed with status ${response.status}`);
         }
 
         const dataResponse = await response.json();
-        const textResponse = dataResponse.choices?.[0]?.message?.content || '{}';
+        let textResponse = dataResponse.choices?.[0]?.message?.content || '{}';
+
+        // Strip any residual markdown formatting strings safely if returned
+        textResponse = textResponse.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
 
         let jsonResponse;
         try {
             jsonResponse = JSON.parse(textResponse);
         } catch (parseError) {
-            console.error('❌ Failed to parse OpenRouter text response string:', textResponse);
+            console.error('❌ Failed to parse raw text response string:', textResponse);
             return res.status(500).json({
                 success: false,
                 message: 'AI returned invalid structured content format. Please try again.'
             });
         }
 
-        if (!jsonResponse.is_valid) {
+        if (jsonResponse.is_valid === false || jsonResponse.error) {
             return res.status(400).json({
                 success: false,
                 isValid: false,
-                message: jsonResponse.reason || 'This does not appear to be a real livestock animal.',
+                message: jsonResponse.reason || jsonResponse.message || 'This does not appear to be a real livestock animal.',
                 hint: 'Please upload a clear photo of an actual farm animal.'
             });
         }
@@ -512,10 +515,10 @@ Be STRICT on validation.`
         });
 
     } catch (error) {
-        console.error('❌ OpenRouter AI Prediction error:', error);
+        console.error('❌ OpenRouter AI Prediction runtime error:', error);
         res.status(500).json({ 
             success: false, 
-            message: 'AI processing failed via OpenRouter.', 
+            message: error.message || 'AI processing failed via OpenRouter.', 
             error: process.env.NODE_ENV === 'development' ? error.message : 'Service temporarily unavailable'
         });
     }
